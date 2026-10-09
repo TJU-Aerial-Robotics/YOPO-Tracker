@@ -38,7 +38,7 @@ The project was tested with Ubuntu 24.04 and Jetson Orin NX. We assume that you 
 git clone --depth 1 git@github.com:TJU-Aerial-Robotics/YOPO-Tracker.git
 ```
 
-Then, download our prebuilt Unity Simulator here.
+Then, click **[here](https://github.com/TJU-Aerial-Robotics/YOPO-Tracker/releases/download/v0.1.0-alpha/YOPO-Tracker-Simulator.zip)** to download our prebuilt YOPO-Tracker-Simulator.
 
 **2. Create Virtual Environment**
 
@@ -64,7 +64,7 @@ colcon build --symlink-install
 
 ## Unity Simulator Instructions
 
-We built a forest simulation environment based on [YOPO-Sim](https://github.com/TJU-Aerial-Robotics/YOPO-Sim), where you can control the person and collect data. Additionally, we developed an FPS game simulator for human-vs-drone gameplay (to be added). See the figure below for usage instructions.
+The tracking simulator can be downloaded from the [Releases page](https://github.com/TJU-Aerial-Robotics/YOPO-Tracker/releases). It was built based on [YOPO-Sim](https://github.com/TJU-Aerial-Robotics/YOPO-Sim), where you can control the person and collect data. Additionally, we developed an FPS game simulator for human-vs-drone gameplay (also see the [Releases page](https://github.com/TJU-Aerial-Robotics/YOPO-Tracker/releases)). See the figure below for usage instructions.
 
 <p align="center">
     <img src="docs/unity.jpg" alt="new_env" />
@@ -120,7 +120,8 @@ You can test the policy in the following ways:
 - Keyboard Control: Enable, then use `W` to move the person forward, `A/D` to turn, and `Shift + W` to run.
 - ROS 2 Topic: Set the person’s navigation goal by publishing: `ros2 topic pub --once /character_0/nav_goal geometry_msgs/msg/Vector3 "{x: 0.0, y: 0.0, z: 0.0}"
 `
-- If the target is lost, click `Respawn` to reset the person, drone, and all programs (including planner and controller).
+
+If the target is lost, click `Respawn` to reset the person, drone, and all programs (including planner and controller) automatically.
 
 You should see the following:
 <p align="center">
