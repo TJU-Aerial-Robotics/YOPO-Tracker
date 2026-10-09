@@ -1,0 +1,13 @@
+# Python 3.12 — must match the interpreter ROS 2 Jazzy was built against,
+# so that `import rclpy` works from this environment.
+torch
+torchvision
+torchaudio
+opencv-python
+scipy
+scikit-build
+ruamel-yaml
+numpy
+tensorboard
+open3d
+rich

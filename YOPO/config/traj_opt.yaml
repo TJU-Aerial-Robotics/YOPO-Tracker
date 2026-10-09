@@ -1,0 +1,71 @@
+# ===================== YOPO planning config =====================
+# speed at test time (modifiable); the trajectory shape is preserved, only time and speed are rescaled
+velocity: 6.0
+
+# ===================== YOPO training config =====================
+# keep training and testing consistent
+vel_max_train: 6.0
+acc_max_train: 6.0
+
+# ---- Cost weights (per unit speed; visualize in tensorboard) ----
+wc: 1.8      # collision    (distance to obstacle)
+wt: 0.12     # tracking     (approaching the target, keeping a safe distance)
+wg: 0.01     # guidance     (fly forward when no target is visible)
+wh: 0.5      # height       (match the target's height; hold current height when no target)
+ws: 30.0     # smoothness   (integral of jerk^2)
+wa: 0.3      # acceleration (integral of acc^2)
+wf: 30.0     # feasibility  (speed / accel limits)
+wtime: 0.4   # total-time   (faster)
+
+# ---- Dataset ----
+dataset_path: "../dataset"       # 训练场景; each sub-dataset is a scene-{i} folder
+val_dataset_path: "../dataset_val"   # 验证场景 (全新场景, 用于验证泛化); 目录不存在则不做验证
+image_height: 192
+image_width: 320
+data_augment: 1   # augment the RGB image? realworld: 1; simulation: 0 (faster training)
+pretrained_backbone: true   # 用 ImageNet 权重初始化 backbone (仅训练时)
+
+# ---- 多源数据 (见 policy/modality.py 的监督表) ----
+public_dataset_path: "../coco-train2017"   # 纯 RGB 的公开检测数据; 留空则不使用
+public_ratio: 0.1             # 每个 batch 里公开样本的期望占比
+modality_dropout_rgb: 0.1     # 真实样本中置空 RGB 的概率 (仅 target 为 nan 的帧)
+modality_dropout_depth: 0.1   # 真实样本中置空深度的概率
+blank_rgb: 0.5                # 置空后 RGB 的填充值 (归一化到 [0,1])
+blank_depth: 1.0              # 置空后深度的填充值 (1.0 = 最远)
+
+# ---- Trajectory and primitive (traj_time = 2 * radio_range / vel_max; visualize in rviz) ----
+horizon_num: 5             # anchor grid: columns (yaw) x rows (pitch)
+vertical_num: 3
+horizon_camera_fov: 90.0   # depth-camera FOV (deg)
+vertical_camera_fov: 60.0
+horizon_anchor_fov: 30.0   # per-anchor endpoint search cone (deg)
+vertical_anchor_fov: 30.0
+radio_range: 5.0           # planning horizon: 2 * radio_range
+radio_num: 1               # only 1 is supported currently
+
+# ---- Loss group weights (not important) ----
+w_traj: 1.0    # trajectory costs (weighted per component below)
+w_detect: 1.0  # target detection head
+w_score: 1.0   # cost-prediction and objectness heads
+
+# ---- Safety penalty (exponential SDF barrier) ----
+d0: 1.2
+r: 0.6
+track_dist: 3.0   # desired horizontal distance to the target (m)
+
+# ---- 正负样本划分 (按目标中心和距离, 半径按目标深度投影到像素) ----
+pos_radius: 0.3      # 正样本半径 (m); 邻格还需在锚点轨迹可达范围内 (±anchor_fov/2)
+ignore_radius: 0.8   # 忽略半径 (m); 其余格子为负样本
+ignore_min_px: 8     # 忽略半径下限 (px), 投影后最小目标像素数
+
+# ---- Training-state sampling (visualize with 'python ./policy/yopo_dataset.py') ----
+# random current state at unit speed, [x, y, z]; x is log-normal, y/z are normal
+v_mean_unit: [0.4, 0.0, 0.0]
+v_std_unit:  [2.0, 0.45, 0.3]
+a_mean_unit: [0.0, 0.0, 0.0]
+a_std_unit:  [0.5, 0.5, 0.3]
+
+# ---- Map ----
+# expand map bounds (esp. z) so trajectories stay inside and the sky isn't treated as an obstacle
+map_expand_min: [0, 0, 0.2]
+map_expand_max: [0, 0, 2.0]

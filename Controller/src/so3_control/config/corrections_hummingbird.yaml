@@ -1,0 +1,6 @@
+so3_control:
+  ros__parameters:
+    corrections:
+      z: 0.0
+      r: 0.0
+      p: 0.0

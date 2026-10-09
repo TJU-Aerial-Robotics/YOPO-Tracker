@@ -1,0 +1,31 @@
+name: yopo
+root: ~/YOPO-Tracker
+
+# ROS 2 Jazzy. /opt/ros/jazzy/setup.bash is already sourced by ~/.bashrc.
+
+# Depth/RGB come from the Unity renderer (/drone_0/depth, /drone_0/rgb) — start it
+# separately. The tracker publishes its pose on /drone_0/odom for Unity to consume.
+
+windows:
+  - yopo:
+      layout: tiled
+      panes:
+        - controller:
+            - cd Controller
+            - source install/setup.bash
+            - ros2 launch so3_quadrotor_simulator simulator_attitude_control.launch.py
+
+        - planner:
+            - cd YOPO
+            - conda activate yopo
+            - source ~/YOTO-dev/Controller/install/setup.bash
+            - python test_yopo_ros.py
+
+        - rviz:
+            - cd YOPO
+            - rviz2 -d yopo.rviz
+
+        - unity:
+            - cd UnityConnector
+            - source install/setup.bash
+            - ros2 run ros_tcp_endpoint default_server_endpoint

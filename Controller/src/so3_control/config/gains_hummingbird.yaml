@@ -1,0 +1,8 @@
+# Vision Gain for Hummingbird  (ROS2 parameter file for the `so3_control` node)
+so3_control:
+  ros__parameters:
+    gains:
+      kx: {x: 2.0, y: 2.0, z: 3.5}
+      kv: {x: 1.8, y: 1.8, z: 2.0}
+      rot: {x: 1.0, y: 1.0, z: 0.3}
+      ang: {x: 0.07, y: 0.07, z: 0.02}
