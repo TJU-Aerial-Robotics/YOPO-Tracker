@@ -1,10 +1,4 @@
 import os
-# 30 Hz 的推理循环不需要多线程 BLAS/OpenMP: 放开会起满 24 个核(实测整进程 923% CPU),
-# 把 CPU 从桥和 RViz 手里抢走, 图像看起来就卡。必须在 numpy/torch 导入前设置。
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import rclpy
 from rclpy.node import Node
@@ -25,8 +19,8 @@ import numpy as np
 import argparse
 from scipy.spatial.transform import Rotation as R
 
-torch.set_num_threads(1)   # GPU 推理, CPU 侧算子无需并行
-cv2.setNumThreads(1)       # resize/cvtColor 在 480x270 上单线程更快且不抢核
+# torch.set_num_threads(1)   # GPU 推理, CPU 侧算子无需并行
+# cv2.setNumThreads(1)       # resize/cvtColor 在 480x270 上单线程更快且不抢核
 
 from config.config import cfg
 from quadrotor_msgs.msg import PositionCommand
@@ -111,18 +105,12 @@ class YopoNet(Node):
         self.ekf_pub = self.create_publisher(PoseStamped, '/yopo_net/target_ekf', 1)
         self.target_image_pub = self.create_publisher(Image, "/yopo_net/target_image", 1)
         self.ctrl_pub = self.create_publisher(PositionCommand, config["ctrl_topic"], 1)
-        # Odom is small and frequent -> best-effort. Images are NOT: a 480x270 rgb8 frame is
-        # ~0.39 MB, and over best-effort UDP losing a single fragment drops the whole frame
-        # (measured: 19 stalls >67 ms per 12 s, peaks 138 ms). Reliable retransmits the
-        # fragment instead -- same 30 Hz, max gap 48 ms, zero stalls. Depth 1 keeps it fresh.
-        odom_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
-                              history=HistoryPolicy.KEEP_LAST, depth=1)
-        image_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
-                               history=HistoryPolicy.KEEP_LAST, depth=1)
-        self.odom_sub = self.create_subscription(Odometry, config['odom_topic'],
-                                                 self.callback_odometry, odom_qos)
-        self.respawn_sub = self.create_subscription(std_msgs.msg.Bool, '/respawn',
-                                                    self.callback_respawn, 1)
+        # QoS: odometry uses BEST_EFFORT, RGB/depth images use RELIABLE.
+        # Both use KEEP_LAST with depth=1 to keep only the latest message.
+        odom_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
+        image_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=1)
+        self.odom_sub = self.create_subscription(Odometry, config['odom_topic'], self.callback_odometry, odom_qos)
+        self.respawn_sub = self.create_subscription(std_msgs.msg.Bool, '/respawn', self.callback_respawn, 1)
         self.depth_sub = message_filters.Subscriber(self, Image, config['depth_topic'], qos_profile=image_qos)
         self.rgb_sub = message_filters.Subscriber(self, Image, config['rgb_topic'], qos_profile=image_qos)
         sync = message_filters.ApproximateTimeSynchronizer([self.depth_sub, self.rgb_sub], queue_size=1, slop=0.05)
@@ -215,25 +203,19 @@ class YopoNet(Node):
         self.ctrl_time = 0.0
 
     def parse_rgbd(self, depth_msg, rgb_msg):
-        """ROS messages -> (network input [1, 4, H, W] on device, BGR image for the debug overlay),
-        or (None, None) if the encodings are unsupported."""
-        try:
-            if depth_msg.encoding == "32FC1":
-                depth_image = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
-                depth_scale = 1.0     # raw depth unit: value per metre
-            elif depth_msg.encoding == "16UC1":
-                depth_image = np.frombuffer(depth_msg.data, dtype=np.uint16).reshape(depth_msg.height, depth_msg.width)
-                depth_scale = 1000.0  # millimetres
-            else:
-                raise ValueError(f"Unsupported depth_image encoding '{depth_msg.encoding}', expected '32FC1' or '16UC1'")
-            if rgb_msg.encoding in ("bgr8", "rgb8"):
-                rgb_image = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
-            else:
-                raise ValueError(f"Unsupported rgb_image encoding '{rgb_msg.encoding}', expected 'bgr8' or 'rgb8'")
-        except Exception as e:
-            print(f"\033[91mImage parsing failed: {e}\033[0m")
-            print("Possible solutions may be found at https://github.com/TJU-Aerial-Robotics/YOPO/issues/2")
-            return None, None
+        """ROS messages -> (network input [1, 4, H, W] on device, BGR image for the debug overlay)"""
+        if depth_msg.encoding == "32FC1":
+            depth_image = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
+            depth_scale = 1.0     # raw depth unit: value per metre
+        elif depth_msg.encoding == "16UC1":
+            depth_image = np.frombuffer(depth_msg.data, dtype=np.uint16).reshape(depth_msg.height, depth_msg.width)
+            depth_scale = 1000.0  # millimetres
+        else:
+            raise ValueError(f"Unsupported depth_image encoding '{depth_msg.encoding}', expected '32FC1' or '16UC1'")
+        if rgb_msg.encoding in ("bgr8", "rgb8"):
+            rgb_image = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
+        else:
+            raise ValueError(f"Unsupported rgb_image encoding '{rgb_msg.encoding}', expected 'bgr8' or 'rgb8'")
 
         # Resize on the uint8/uint16 data, before the float conversion below
         if depth_image.shape[:2] != (self.height, self.width):
@@ -259,8 +241,6 @@ class YopoNet(Node):
         rgbd_image[0, 0:3] = rgb_image.transpose(2, 0, 1)
         rgbd_image[0, 0:3] /= 255.0
         rgbd_image[0, 3] = depth_image
-        # NOTE: allocate a fresh array each frame, never a reused pinned buffer -- the non_blocking
-        # upload would then be truly async and the next frame would overwrite data still in flight
         return torch.from_numpy(rgbd_image).to(self.device, non_blocking=True), vis_image
 
     def update_search(self):
@@ -358,8 +338,6 @@ class YopoNet(Node):
         # 1. RGB-D image process
         time0 = time.time()
         rgbd_image, vis_image = self.parse_rgbd(depth_msg, rgb_msg)
-        if rgbd_image is None:
-            return
 
         # 2. YOPO network inference (TensorRT: ~5x faster)
         time1 = time.time()
@@ -390,8 +368,7 @@ class YopoNet(Node):
         self.update_hover(self.ekf_target is not None if self.ekf_thresh > 0 else score > self.conf_thresh)
 
         # target_seen: nothing is planned before the first confirmed target, so the controller hovers
-        if not self.hovering and (score > self.conf_thresh or
-                                  (self.target_seen and not self.last_trajectory_tracking and not self.searching)):
+        if not self.hovering and (score > self.conf_thresh or (self.target_seen and not self.last_trajectory_tracking and not self.searching)):
             with self.lock:
                 start_pos, start_vel = self.start_state()
                 end = endstate_w[action_id]  # [px vx ax, py vy ay, pz vz az]
@@ -419,11 +396,9 @@ class YopoNet(Node):
         return calculate_yaw(towards_target - self.desire_pos, self.last_yaw, self.ctrl_dt, max_yaw_rate=1)
 
     def control_pub(self):
-        # The lock guards against respawn clearing ctrl_time and the polynomials mid-call,
-        # so the early returns must be inside it too
+        # The lock guards against respawn clearing ctrl_time and the polynomials mid-call, so the early returns must be inside it too
         with self.lock:
-            if self.ctrl_time is None or (self.ctrl_time > self.traj_time
-                                          and not self.searching and not self.hovering):
+            if self.ctrl_time is None or (self.ctrl_time > self.traj_time and not self.searching and not self.hovering):
                 return
             if self.hovering:  # freeze the reference; the EMPTY command below brakes and holds it
                 self.desire_vel, self.desire_acc = np.zeros(3), np.zeros(3)
@@ -442,8 +417,7 @@ class YopoNet(Node):
             control_msg = PositionCommand()
             control_msg.header.stamp = self.get_clock().now().to_msg()
             # EMPTY switches the controller to position feedback, which brakes to desire_pos and holds it
-            control_msg.trajectory_flag = (control_msg.TRAJECTORY_STATUS_EMPTY if self.hovering
-                                           else control_msg.TRAJECTORY_STATUS_READY)
+            control_msg.trajectory_flag = (control_msg.TRAJECTORY_STATUS_EMPTY if self.hovering else control_msg.TRAJECTORY_STATUS_READY)
             control_msg.position.x, control_msg.position.y, control_msg.position.z = self.desire_pos
             control_msg.velocity.x, control_msg.velocity.y, control_msg.velocity.z = self.desire_vel
             control_msg.acceleration.x, control_msg.acceleration.y, control_msg.acceleration.z = self.desire_acc
@@ -502,8 +476,7 @@ class YopoNet(Node):
             optimal_index = valid_indices[np.argmin(valid_costs)]
             have_target = 1
         else:
-            # Fallback: cheapest anchor among those reporting no target, so an anchor the EKF just
-            # rejected cannot be selected again
+            # Fallback: cheapest anchor among those reporting no target, so an anchor the EKF just rejected cannot be selected again
             fallback = np.nonzero(~mask)[0]
             optimal_index = fallback[np.argmin(cost_pred[fallback])] if fallback.size > 0 else np.argmin(cost_pred)
             have_target = 0
@@ -517,8 +490,7 @@ class YopoNet(Node):
         colors = np.broadcast_to(colors, (len(points), 4)).tolist()
         markers = MarkerArray()
         for i, (line, (r, g, b, a)) in enumerate(zip(points.tolist(), colors)):
-            m = Marker(header=header, id=i, type=Marker.LINE_STRIP, action=Marker.ADD,
-                       color=std_msgs.msg.ColorRGBA(r=r, g=g, b=b, a=a))
+            m = Marker(header=header, id=i, type=Marker.LINE_STRIP, action=Marker.ADD, color=std_msgs.msg.ColorRGBA(r=r, g=g, b=b, a=a))
             m.pose.orientation.w, m.scale.x = 1.0, width
             m.points = [Point(x=x, y=y, z=z) for x, y, z in line]
             markers.markers.append(m)
